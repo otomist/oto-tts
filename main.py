@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-import argparse
-import subprocess
-import sys
+import argparse, subprocess, sys, re
 from pathlib import Path
 
 PRESETS = {
@@ -10,6 +8,12 @@ PRESETS = {
     "zh_f": ("zf_xiaoxiao", "cmn"),
     "zh_m": ("zm_yunjian", "cmn"),
 }
+
+# Covers CJK Unified Ideographs (+ Extension A) and CJK Compatibility Ideographs
+CJK_REGEX = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
+
+def contains_cjk(s: str) -> bool:
+    return CJK_REGEX.search(s) is not None
 
 def run_tts(text: str, outfile: str | None, voice: str, lang: str):
     cmd = ["uv", "run", "kokoro-tts", "-"]
@@ -23,35 +27,39 @@ def run_tts(text: str, outfile: str | None, voice: str, lang: str):
         sys.exit(f"TTS failed with code {result.returncode}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Kokoro TTS wrapper")
-    parser.add_argument("input", help="Text to speak or path to a .txt file")
-    parser.add_argument("-o", "--output", help="Output file (default: stream only)")
-    parser.add_argument("--voice", help="Explicit voice ID (overrides presets)")
-    parser.add_argument("--lang", help="Explicit language code (overrides presets)")
-    parser.add_argument("--en_f", action="store_true", help="Preset: English female")
-    parser.add_argument("--en_m", action="store_true", help="Preset: English male")
-    parser.add_argument("--zh_f", action="store_true", help="Preset: Chinese female")
-    parser.add_argument("--zh_m", action="store_true", help="Preset: Chinese male")
-    args = parser.parse_args()
+    p = argparse.ArgumentParser(description="Kokoro TTS wrapper with auto CN/EN")
+    p.add_argument("input", help="Text to speak or path to a .txt file")
+    p.add_argument("-o", "--output", help="Output file (default: stream only)")
+    p.add_argument("--voice", help="Explicit voice ID (overrides presets)")
+    p.add_argument("--lang", help="Explicit language code (overrides presets)")
+    p.add_argument("--en_f", action="store_true", help="Preset: English female")
+    p.add_argument("--en_m", action="store_true", help="Preset: English male")
+    p.add_argument("--zh_f", action="store_true", help="Preset: Chinese female")
+    p.add_argument("--zh_m", action="store_true", help="Preset: Chinese male")
+    args = p.parse_args()
 
-    # Determine preset
-    voice, lang = PRESETS["en_f"]  # default
+    # Read input (string or file)
+    path = Path(args.input)
+    text = path.read_text(encoding="utf-8") if path.exists() else args.input
+
+    # Default preset
+    voice, lang = PRESETS["en_f"]
+
+    # Apply explicit preset flags if any
     for key in ("en_f", "en_m", "zh_f", "zh_m"):
         if getattr(args, key):
             voice, lang = PRESETS[key]
 
-    # Override with explicit args
+    # If no explicit preset/overrides, auto-detect CJK and switch to zh_f
+    if not any(getattr(args, k) for k in ("en_f", "en_m", "zh_f", "zh_m")) and not args.voice and not args.lang:
+        if contains_cjk(text):
+            voice, lang = PRESETS["zh_f"]
+
+    # Explicit overrides win last
     if args.voice:
         voice = args.voice
     if args.lang:
         lang = args.lang
-
-    # Read input (string or file)
-    input_path = Path(args.input)
-    if input_path.exists():
-        text = input_path.read_text(encoding="utf-8")
-    else:
-        text = args.input
 
     run_tts(text, args.output, voice, lang)
 
